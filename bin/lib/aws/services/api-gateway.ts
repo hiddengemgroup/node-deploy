@@ -1,8 +1,9 @@
-import { jsonResponse, okResponse, throwOnNotOK } from '@riddance/fetch'
+import { jsonResponse, okResponse, thrownHasStatus, throwOnNotOK } from '@riddance/fetch'
 import { Reflection } from '@riddance/host/reflect'
 import { isDeepStrictEqual } from 'node:util'
 import { compare } from '../diff.js'
 import { LocalEnv, awsRequest } from '../lite.js'
+import { setTimeout } from 'node:timers/promises'
 
 export async function syncGateway(
     env: LocalEnv,
@@ -145,12 +146,42 @@ export type AwsGatewayApi = {
     }
 }
 
+const cachedApis: AwsGatewayApi[] = []
+
+export async function fetchApis(env: LocalEnv) {
+    if (cachedApis.length === 0) {
+        let marker = ''
+        for (;;) {
+            try {
+                const page = await jsonResponse<{ items: AwsGatewayApi[]; nextToken?: string }>(
+                    awsRequest(env, 'GET', 'apigateway', `/v2/apis/?${marker}`),
+                    'Error fetching APIs.',
+                )
+                cachedApis.push(...page.items)
+                if (typeof page.nextToken !== 'string') {
+                    break
+                }
+                marker = `nextToken=${encodeURIComponent(page.nextToken)}`
+            } catch (err) {
+                if (thrownHasStatus(err, 429)) {
+                    await setTimeout(1000)
+                    continue
+                }
+                throw err
+            }
+        }
+    }
+    return cachedApis
+}
+
+export async function getApiEndpoint(env: LocalEnv, prefix: string, service: string) {
+    const apis = await fetchApis(env)
+    const api = apis.find(a => a.name === `${prefix}-${service}`)
+    return api?.apiEndpoint
+}
 export async function getApi(env: LocalEnv, prefix: string, service: string) {
-    const apis = await jsonResponse<{ items: AwsGatewayApi[] }>(
-        awsRequest(env, 'GET', 'apigateway', `/v2/apis/`),
-        'Error getting APIs.',
-    )
-    const api = apis.items.find(a => a.name === `${prefix}-${service}`)
+    const apis = await fetchApis(env)
+    const api = apis.find(a => a.name === `${prefix}-${service}`)
     if (!api) {
         return { integrations: [], routes: [] }
     }

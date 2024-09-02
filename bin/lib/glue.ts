@@ -6,21 +6,24 @@ import { join } from 'node:path'
 export type Resolver = {
     getEnvironment(prefix: string, service: string): Promise<{ [key: string]: string }>
     getBaseUrl(prefix: string, service: string): Promise<string | undefined>
+    prefetch(): Promise<void>
+}
+
+type Implementations = {
+    [interfacePackage: string]: {
+        implementation: string
+        version: string
+    }
 }
 
 export async function getGlue(path: string, prefix: string, resolver: Resolver, gluePath?: string) {
     const [packageJson, glueJson] = await Promise.all([
         readFile(join(path, 'package.json'), 'utf-8'),
-        readFile(gluePath ?? join(path, '..', 'glue', 'glue.json'), 'utf-8'),
+        readFile(gluePath ?? join(path, '..', 'glue', `glue.${prefix}.json`), 'utf-8'),
     ])
     const { name: service } = JSON.parse(packageJson) as { name: string }
     const glue = JSON.parse(glueJson) as {
-        implementations: {
-            [interfacePackage: string]: {
-                implementation: string
-                version: string
-            }
-        }
+        implementations: Implementations
         websites: {
             [key: string]: string[]
         }
@@ -29,16 +32,31 @@ export async function getGlue(path: string, prefix: string, resolver: Resolver, 
                 cors?: string
                 env: { [key: string]: string }
                 secrets: { [key: string]: string }
+                implementations?: Implementations
+                [provider: string]: unknown
+            }
+        }
+        apps: {
+            [key: string]: {
+                name: string
+                provider: 'vercel' | 'fly'
+                githubRepo: string
+                env: { [key: string]: string }
+                secrets: { [key: string]: string }
+                cors?: string
+                implementations?: Implementations
                 [provider: string]: unknown
             }
         }
     }
 
-    const { cors, env, secrets, ...provider } = glue.services[service] ?? {}
+    const { cors, env, secrets, implementations, ...provider } =
+        glue.services[service] ?? glue.apps[service] ?? {}
     return {
         service,
         implementations: {
             ...glue.implementations,
+            ...implementations,
         },
         corsSites: cors ? (glue.websites[cors] ?? []) : [],
         env: resolveEnv(env ?? {}, secrets ?? {}, prefix, service, resolver),
@@ -106,10 +124,7 @@ const variables: Variable[] = [
         value: (_prefix, _service, [, service, key], _key, env, _url) =>
             // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
             env[service!]?.[key!] ??
-            variableError(
-                // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-                `Variable ${key!} for ${service!} not found. Has it been deployed?`,
-            ),
+            variableWarning(`Variable ${key} for ${service} not found. Has it been deployed?`, ''),
     },
     {
         pattern: /\$PUBLIC_KEY\(([^,]+),([^)]+)\)/gu,
@@ -146,6 +161,11 @@ function variableError(message: string): never {
     throw new Error(message)
 }
 
+function variableWarning(message: string, returnValue: string) {
+    console.warn(message)
+    return returnValue
+}
+
 async function resolveEnv(
     clear: { [key: string]: string },
     secrets: { [key: string]: string },
@@ -178,6 +198,7 @@ async function resolveEnv(
             }
         }
     }
+    await resolver.prefetch()
     const [environments, baseUrls] = await Promise.all([
         fetchEnvironments(prefix, referencedEnvironments, resolver),
         fetchBaseUrls(prefix, referencedBaseUrls, resolver),
@@ -192,7 +213,7 @@ async function resolveEnv(
                 ) {
                     return substring
                 }
-                const s = v.value(
+                return v.value(
                     prefix,
                     service,
                     [substring, ...matches],
@@ -200,7 +221,6 @@ async function resolveEnv(
                     environments,
                     baseUrls,
                 )
-                return s
             })
         }
     }
@@ -210,7 +230,7 @@ async function resolveEnv(
         env[ref.key] = env[ref.key]!.replaceAll(
             ref.v.pattern,
             (substring, ...matches: string[]) => {
-                const s = ref.v.value(
+                return ref.v.value(
                     prefix,
                     service,
                     [substring, ...matches],
@@ -218,7 +238,6 @@ async function resolveEnv(
                     { [service]: env },
                     baseUrls,
                 )
-                return s
             },
         )
     }

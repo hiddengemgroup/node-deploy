@@ -1,5 +1,5 @@
 {
-  "name": "@riddance/deploy",
+  "name": "@hiddengemgroup/deploy",
   "version": "0.0.3",
   "type": "module",
   "keywords": [
@@ -23,7 +23,7 @@
   ],
   "bin": {
     "cli": "bin/cli.js",
-    "deploy": "bin/deploy.js"
+    "deploy": "bin/cli.js"
   },
   "dependencies": {
     "@riddance/fetch": "0.1.2",
@@ -38,6 +38,7 @@
     "terser": "5.31.6"
   },
   "scripts": {
+    "prepare": "tsc",
     "prepack": "riddance-build",
     "start": "riddance-watch",
     "prepublishOnly": "riddance-prepublish",

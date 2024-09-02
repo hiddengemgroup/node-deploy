@@ -1,6 +1,6 @@
 import { localAwsEnv } from './lite.js'
-import { getApi } from './services/api-gateway.js'
-import { getFunctions } from './services/lambda.js'
+import { fetchApis, getApiEndpoint } from './services/api-gateway.js'
+import { fetchFunctions, getFunctions } from './services/lambda.js'
 
 export class Resolver {
     readonly #env
@@ -9,13 +9,16 @@ export class Resolver {
         this.#env = localAwsEnv(undefined, prefix)
     }
 
+    async prefetch() {
+        await Promise.all([fetchFunctions(await this.#env), fetchApis(await this.#env)])
+    }
+
     async getEnvironment(prefix: string, service: string): Promise<{ [key: string]: string }> {
         const functions = await getFunctions(await this.#env, prefix, service)
         return Object.fromEntries(functions.flatMap(fn => Object.entries(fn.env)))
     }
 
     async getBaseUrl(prefix: string, service: string): Promise<string | undefined> {
-        const api = await getApi(await this.#env, prefix, service)
-        return (api.api?.apiEndpoint ?? '') + '/'
+        return ((await getApiEndpoint(await this.#env, prefix, service)) ?? '') + '/'
     }
 }
