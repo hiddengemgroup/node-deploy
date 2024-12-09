@@ -100,11 +100,14 @@ async function syncIntegrations(
 ) {
     const { missing, surplus, existing } = compare(
         reflection.http,
-        currentIntegrations.map(i => ({
-            // eslint-disable-next-line @typescript-eslint/no-non-null-assertion
-            name: i.integrationUri.split(':').at(-1)!.split('-').at(-1)!,
-            ...i,
-        })),
+        currentIntegrations.map(i => {
+            const [, , ...nameParts] = i.integrationUri.split(':').at(-1)?.split('-') ?? []
+            return {
+                // previously i.integrationUri.split(':').at(-1)!.split('-').at(-1)!
+                name: nameParts.join('-'),
+                ...i,
+            }
+        }),
     )
     const ids = await Promise.all([
         ...missing.map(fn =>
@@ -190,7 +193,7 @@ export async function getApi(env: LocalEnv, prefix: string, service: string) {
         getRoutes(env, api.apiId),
         getStage(env, api.apiId),
     ])
-    return { api, integrations: integrations.items, routes: routes.items, stage }
+    return { api, integrations, routes, stage }
 }
 
 export type AwsIntegration = {
@@ -202,13 +205,25 @@ export type AwsIntegration = {
     timeoutInMillis: number | undefined
 }
 
-async function getIntegrations(env: LocalEnv, apiId: string) {
-    return await jsonResponse<{
-        items: (AwsIntegration & { integrationId: string })[]
-    }>(
-        awsRequest(env, 'GET', 'apigateway', `/v2/apis/${apiId}/integrations`),
-        'Error getting API integrations.',
-    )
+type FetchedAwsIntegration = AwsIntegration & { integrationId: string }
+
+export async function getIntegrations(env: LocalEnv, apiId: string) {
+    const integrations: FetchedAwsIntegration[] = []
+    for (let next = ''; ; ) {
+        const page = await jsonResponse<{
+            items: FetchedAwsIntegration[]
+            nextToken?: string
+        }>(
+            awsRequest(env, 'GET', 'apigateway', `/v2/apis/${apiId}/integrations${next}`),
+            'Error getting API integrations..',
+        )
+        integrations.push(...page.items)
+        if (!page.nextToken) {
+            break
+        }
+        next = `?nextToken=${encodeURIComponent(page.nextToken)}`
+    }
+    return integrations
 }
 
 function asIntegration(
@@ -307,13 +322,25 @@ function trimTrailingSlash(pathPattern: string) {
     return pathPattern
 }
 
-async function getRoutes(env: LocalEnv, apiId: string) {
-    return await jsonResponse<{
-        items: (AwsRoute & { routeId: string })[]
-    }>(
-        awsRequest(env, 'GET', 'apigateway', `/v2/apis/${apiId}/routes`),
-        'Error getting API routes.',
-    )
+type FetchedAwsRoute = AwsRoute & { routeId: string }
+
+export async function getRoutes(env: LocalEnv, apiId: string) {
+    const routes: FetchedAwsRoute[] = []
+    for (let next = ''; ; ) {
+        const page = await jsonResponse<{
+            items: FetchedAwsRoute[]
+            nextToken?: string
+        }>(
+            awsRequest(env, 'GET', 'apigateway', `/v2/apis/${apiId}/routes${next}`),
+            'Error getting API routes..',
+        )
+        routes.push(...page.items)
+        if (!page.nextToken) {
+            break
+        }
+        next = `?nextToken=${encodeURIComponent(page.nextToken)}`
+    }
+    return routes
 }
 
 async function createRoute(env: LocalEnv, apiId: string, route: AwsRoute) {

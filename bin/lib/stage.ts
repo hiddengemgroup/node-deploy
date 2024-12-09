@@ -164,6 +164,7 @@ async function find(dir: string): Promise<string[]> {
                 !f.endsWith('.min.js') &&
                 f !== 'tsconfig.json' &&
                 f !== 'cspell.json' &&
+                f !== 'eslint.config.js' &&
                 f !== 'dictionary.txt' &&
                 f !== 'node_modules' &&
                 f !== 'test' &&
